@@ -69,4 +69,4 @@ Layout:
 - `src/devices/v4ex.js`: V-4EX controls and actions, compiled into generic message steps that both engines play
 - `src/deviceUi.js`: the action editor and device setup panel
 
-CI (`.github/workflows/ci.yml`) builds mac (universal), linux and windows on every push and PR, with the installers attached as workflow artifacts. Pushing a `v*` tag also creates a draft GitHub release. Pushes to `main` deploy the web version to GitHub Pages.
+CI (`.github/workflows/ci.yml`) builds mac (universal), linux and windows on every push and PR, with the installers attached as workflow artifacts. Publishing a GitHub release builds from its tag and attaches the installers plus a zip of the web build (the app version is taken from the tag, e.g. `v1.2.0` → `1.2.0`). Pushes to `main` deploy the web version to GitHub Pages.
