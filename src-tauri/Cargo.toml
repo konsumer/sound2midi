@@ -1,0 +1,23 @@
+[package]
+name = "sound2midi"
+version = "0.1.0"
+description = "Convert incoming sound into MIDI notes, CC and OSC"
+edition = "2021"
+
+[lib]
+name = "sound2midi_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+cpal = "0.18.2"
+midir = "0.11.1"
+ringbuf = "0.5.3"
+rosc = "0.11.4"
+rustfft = "6.4.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"

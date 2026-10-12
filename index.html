@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./src/style.css" />
+    <title>sound2midi</title>
+  </head>
+  <body>
+    <header class="toolbar">
+      <div class="brand"><img src="./icon.svg" alt="" /> sound2midi <span id="mode" class="badge"></span></div>
+
+      <div class="group">
+        <button id="start" class="primary">Start</button>
+        <label
+          >Input
+          <select id="input"></select
+        ></label>
+        <label
+          ><select id="channel" title="Input channel">
+            <option value="0">Mix</option>
+          </select></label
+        >
+        <div class="meter" title="Input level"><div id="inputMeter"></div></div>
+      </div>
+
+      <div class="group">
+        <label>Gain <input id="gain" type="range" min="-24" max="36" step="1" /> <span id="gainValue" class="mono"></span></label>
+        <label
+          >FFT
+          <select id="fft">
+            <option value="512">512</option>
+            <option value="1024">1024</option>
+            <option value="2048">2048</option>
+            <option value="4096">4096</option>
+            <option value="8192">8192</option>
+            <option value="16384">16384</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="group">
+        <label
+          >MIDI
+          <select id="midi"></select
+        ></label>
+        <button id="refresh" title="Rescan devices">⟳</button>
+        <label id="oscGroup">OSC <input id="oscHost" class="host" /> : <input id="oscPort" class="port" type="number" min="1" max="65535" /></label>
+      </div>
+
+      <div class="group right">
+        <button id="load">Load</button>
+        <button id="save">Save</button>
+        <button id="panic" title="All notes off">Panic</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="viz">
+        <div class="spectrum-wrap">
+          <canvas id="spectrum"></canvas>
+          <div id="readout" class="readout mono"></div>
+          <div class="hint">drag empty space to add a band · drag edges to resize · drag lines to set levels · scroll to change width · del to remove</div>
+        </div>
+        <canvas id="waterfall"></canvas>
+      </section>
+
+      <aside class="side">
+        <div class="side-head">
+          <h2>Triggers</h2>
+          <button id="add" class="primary">+ Add</button>
+        </div>
+        <ul id="list" class="list"></ul>
+        <div id="editor" class="editor"></div>
+      </aside>
+    </main>
+
+    <div id="toast" class="toast"></div>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
