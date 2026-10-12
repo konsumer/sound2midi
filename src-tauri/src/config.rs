@@ -6,6 +6,8 @@ pub enum OutputKind {
   Note,
   Cc,
   Osc,
+  // plays compiled steps from a device profile (see src/devices in the UI)
+  Device,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -15,6 +17,31 @@ pub enum OscMode {
   Value,
   // 1 when band crosses threshold, 0 when it falls back
   Gate,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Trigger {
+  // when the band crosses its threshold
+  #[default]
+  On,
+  // when it falls back below threshold - hysteresis
+  Off,
+  // like On, but plays the next entry of seq each time
+  Cycle,
+  // continuously, with the level mapped onto lo..hi
+  Value,
+}
+
+// one group of MIDI messages; bytes -1 = 7-bit value, -2/-3 = 14-bit LSB/MSB
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Step {
+  pub trigger: Trigger,
+  pub msgs: Vec<Vec<i16>>,
+  pub seq: Vec<Vec<Vec<i16>>>,
+  pub lo: f32,
+  pub hi: f32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -40,6 +67,10 @@ pub struct Mapping {
   pub cc: u8,
   pub osc_address: String,
   pub osc_mode: OscMode,
+  pub device: String,
+  // the friendly action list is only interpreted by the UI
+  pub actions: Vec<serde_json::Value>,
+  pub steps: Vec<Step>,
 }
 
 impl Default for Mapping {
@@ -64,6 +95,9 @@ impl Default for Mapping {
       cc: 1,
       osc_address: "/sound2midi/band".into(),
       osc_mode: OscMode::Value,
+      device: "v4ex".into(),
+      actions: vec![],
+      steps: vec![],
     }
   }
 }
@@ -79,6 +113,8 @@ pub struct Config {
   pub midi_output: Option<String>,
   pub osc_host: String,
   pub osc_port: u16,
+  // device profiles, only interpreted by the UI
+  pub devices: serde_json::Value,
   pub mappings: Vec<Mapping>,
 }
 
@@ -92,6 +128,7 @@ impl Default for Config {
       midi_output: None,
       osc_host: "127.0.0.1".into(),
       osc_port: 9000,
+      devices: serde_json::Value::Null,
       mappings: vec![
         Mapping {
           id: "kick".into(),

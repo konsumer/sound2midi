@@ -115,6 +115,8 @@ class BandState {
     this.sentNote = null
     this.sentCc = null
     this.sentOsc = null
+    this.cycles = []
+    this.sentValues = []
   }
 
   release(out, m) {
@@ -123,8 +125,50 @@ class BandState {
       this.sentNote = null
     }
     if (m && this.active && m.output === 'osc' && m.oscMode === 'gate') out.osc(m.oscAddress, 0)
+    if (m && this.active && m.output === 'device') sendSteps(m.steps, 'off', this, out)
     this.active = false
   }
+}
+
+// fill a step message's value placeholders (-1 = 7-bit, -2/-3 = 14-bit LSB/MSB)
+const render = (msg, v) => {
+  const v14 = Math.round((v / 127) * 16383)
+  return msg.map((b) => (b === -1 ? v : b === -2 ? v14 & 0x7f : b === -3 ? v14 >> 7 : b & 0xff))
+}
+
+const sendSteps = (steps, trigger, st, out) => {
+  steps.forEach((s, i) => {
+    if (s.trigger === trigger) {
+      for (const msg of s.msgs) out.raw(render(msg, 0))
+    } else if (trigger === 'on' && s.trigger === 'cycle' && s.seq?.length) {
+      const n = st.cycles[i] || 0
+      for (const msg of s.seq[n % s.seq.length]) out.raw(render(msg, 0))
+      st.cycles[i] = (n + 1) % s.seq.length
+    }
+  })
+}
+
+const processDevice = (m, st, out, was) => {
+  const steps = m.steps || []
+  if (st.steps !== steps) {
+    // steps were recompiled, forget per-step state
+    st.steps = steps
+    st.cycles = []
+    st.sentValues = []
+  }
+  if (st.active && !was) sendSteps(steps, 'on', st, out)
+  if (!st.active && was) sendSteps(steps, 'off', st, out)
+  const v = normalize(st.levelDb, m.minDb, m.maxDb)
+  let follows = false
+  steps.forEach((s, i) => {
+    if (s.trigger !== 'value') return
+    follows = true
+    const val = Math.round(Math.min(127, Math.max(0, s.lo + v * (s.hi - s.lo))))
+    if (st.sentValues[i] === val) return
+    st.sentValues[i] = val
+    for (const msg of s.msgs) out.raw(render(msg, val))
+  })
+  return follows ? v : st.active ? 1 : 0
 }
 
 const processBand = (m, st, out) => {
@@ -157,6 +201,8 @@ const processBand = (m, st, out) => {
     }
     return active ? 1 : 0
   }
+
+  if (m.output === 'device') return processDevice(m, st, out, was)
 
   if (m.output === 'cc') {
     const v = normalize(level, m.minDb, m.maxDb)

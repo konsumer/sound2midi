@@ -1,5 +1,7 @@
 import { defaultMapping, PALETTE, DISPLAY_MIN_HZ, DISPLAY_MAX_HZ } from './defaults.js'
-import { SpectrumView, noteName, formatHz, outputSummary } from './view.js'
+import { SpectrumView, noteName, formatHz, outputSummary, usesThreshold, usesRange } from './view.js'
+import { compile, defaultAction } from './devices/v4ex.js'
+import { renderDeviceEditor, openDeviceSetup } from './deviceUi.js'
 
 const $ = (id) => document.getElementById(id)
 const isTauri = !!window.__TAURI_INTERNALS__
@@ -62,9 +64,15 @@ const app = {
   }
 }
 
+// device outputs are sent to the engines as compiled message steps
+const compileSteps = () => {
+  for (const m of app.config.mappings) m.steps = m.output === 'device' ? compile(m.actions, app.config.devices.v4ex).steps : []
+}
+
 // push config to the backend, coalescing rapid edits (e.g. dragging)
 let commitTimer = null
 const commit = () => {
+  compileSteps()
   if (commitTimer) return
   commitTimer = setTimeout(async () => {
     commitTimer = null
@@ -318,7 +326,7 @@ const renderEditor = () => {
 
     <h3>Output</h3>
     <div class="seg" data-seg="output">
-      <button data-v="note">Note</button><button data-v="cc">CC</button><button data-v="osc" ${backend.capabilities.osc ? '' : 'disabled title="OSC needs the desktop app"'}>OSC</button>
+      <button data-v="note">Note</button><button data-v="cc">CC</button><button data-v="osc" ${backend.capabilities.osc ? '' : 'disabled title="OSC needs the desktop app"'}>OSC</button><button data-v="device" title="Roland V-4EX video mixer">V-4EX</button>
     </div>
     <div class="grid" data-show="note">
       ${midiCh}
@@ -338,6 +346,8 @@ const renderEditor = () => {
         ]
       })}
     </div>
+
+    <div data-show="device"><div data-device></div></div>
 
     <h3>Detection</h3>
     <div class="grid">
@@ -376,8 +386,25 @@ const renderEditor = () => {
   })
   el.querySelectorAll('[data-seg="output"] button').forEach((b) => {
     b.onclick = () => {
-      app.updateMapping(app.selectedId, { output: b.dataset.v })
+      const cur = app.config.mappings.find((x) => x.id === app.selectedId)
+      // start a fresh V-4EX trigger with one action so there's something to edit
+      const actions = b.dataset.v === 'device' && !cur.actions.length ? [defaultAction()] : cur.actions
+      app.updateMapping(app.selectedId, { output: b.dataset.v, actions })
+      redrawDevice()
     }
+  })
+  const redrawDevice = renderDeviceEditor(el.querySelector('[data-device]'), {
+    getMapping: () => app.config.mappings.find((x) => x.id === app.selectedId),
+    getProfile: () => app.config.devices.v4ex,
+    setActions: (actions) => app.updateMapping(app.selectedId, { actions }),
+    openSetup: (redraw) =>
+      openDeviceSetup(app.config.devices.v4ex, (profile) => {
+        app.config.devices.v4ex = profile
+        commit()
+        redraw()
+        syncEditor()
+        renderList()
+      })
   })
   el.querySelector('[data-act="delete"]').onclick = () => app.removeMapping(m.id)
   el.querySelector('[data-act="duplicate"]').onclick = () => {
@@ -401,9 +428,8 @@ const syncEditor = () => {
   })
   el.querySelectorAll('[data-seg="output"] button').forEach((b) => b.classList.toggle('on', b.dataset.v === m.output))
   el.querySelectorAll('[data-show]').forEach((g) => (g.hidden = g.dataset.show !== m.output))
-  const gate = m.output === 'note' || (m.output === 'osc' && m.oscMode === 'gate')
-  el.querySelector('[data-gate]').hidden = !gate
-  el.querySelector('[data-range]').hidden = gate
+  el.querySelector('[data-gate]').hidden = !usesThreshold(m)
+  el.querySelector('[data-range]').hidden = !usesRange(m)
   const noteEl = el.querySelector('[data-note]')
   if (noteEl) noteEl.textContent = noteName(m.note)
 }
@@ -435,6 +461,7 @@ window.addEventListener('keydown', (e) => {
   }
 })
 
+compileSteps()
 initToolbar()
 renderList()
 renderEditor()

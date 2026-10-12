@@ -44,6 +44,7 @@ export const createBackend = async () => {
     noteOn: (ch, note, vel) => send([0x90 | (ch - 1), note & 0x7f, vel]),
     noteOff: (ch, note) => send([0x80 | (ch - 1), note & 0x7f, 0]),
     cc: (ch, cc, v) => send([0xb0 | (ch - 1), cc & 0x7f, v & 0x7f]),
+    raw: (bytes) => send(bytes),
     osc: () => {}
   }
 

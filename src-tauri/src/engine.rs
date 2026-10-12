@@ -1,4 +1,4 @@
-use crate::config::{Mapping, OscMode, OutputKind};
+use crate::config::{Mapping, OscMode, OutputKind, Step, Trigger};
 use crate::output::Outputs;
 use crate::Shared;
 use ringbuf::traits::Consumer;
@@ -56,6 +56,10 @@ struct BandState {
   // (channel, cc, value) last sent
   sent_cc: Option<(u8, u8, u8)>,
   sent_osc: Option<f32>,
+  // per-step state for device output, reset when steps change
+  steps_key: usize,
+  cycles: Vec<usize>,
+  sent_values: Vec<Option<u8>>,
 }
 
 impl BandState {
@@ -66,6 +70,9 @@ impl BandState {
       sent_note: None,
       sent_cc: None,
       sent_osc: None,
+      steps_key: 0,
+      cycles: vec![],
+      sent_values: vec![],
     }
   }
 
@@ -76,6 +83,9 @@ impl BandState {
     if let Some(m) = m {
       if self.active && m.output == OutputKind::Osc && m.osc_mode == OscMode::Gate {
         out.osc(&m.osc_address, 0.0);
+      }
+      if self.active && m.output == OutputKind::Device {
+        send_steps(&m.steps, Trigger::Off, self, out);
       }
     }
     self.active = false;
@@ -149,6 +159,83 @@ fn normalize(level: f32, min: f32, max: f32) -> f32 {
   ((level - min) / (max - min)).clamp(0.0, 1.0)
 }
 
+fn render(msg: &[i16], v: u8) -> Vec<u8> {
+  let v14 = ((v as f32 / 127.0) * 16383.0).round() as u16;
+  msg
+    .iter()
+    .map(|&b| match b {
+      -1 => v,
+      -2 => (v14 & 0x7f) as u8,
+      -3 => (v14 >> 7) as u8,
+      b => b as u8,
+    })
+    .collect()
+}
+
+fn send_steps(steps: &[Step], trigger: Trigger, st: &mut BandState, out: &mut Outputs) {
+  for (i, s) in steps.iter().enumerate() {
+    if s.trigger == trigger {
+      for msg in &s.msgs {
+        out.raw(&render(msg, 0));
+      }
+    } else if trigger == Trigger::On && s.trigger == Trigger::Cycle && !s.seq.is_empty() {
+      let n = st.cycles[i] % s.seq.len();
+      for msg in &s.seq[n] {
+        out.raw(&render(msg, 0));
+      }
+      st.cycles[i] = (n + 1) % s.seq.len();
+    }
+  }
+}
+
+// cheap identity for a step list, so per-step state resets when it's recompiled
+fn steps_key(steps: &[Step]) -> usize {
+  steps.iter().fold(steps.len(), |k, s| {
+    s.msgs.iter().chain(s.seq.iter().flatten()).flatten().fold(
+      k.wrapping_mul(31).wrapping_add(s.trigger as usize),
+      |k, &b| k.wrapping_mul(31).wrapping_add(b as usize),
+    )
+  })
+}
+
+fn process_device(m: &Mapping, st: &mut BandState, out: &mut Outputs, was: bool) -> f32 {
+  let key = steps_key(&m.steps);
+  if key != st.steps_key || st.cycles.len() != m.steps.len() {
+    st.steps_key = key;
+    st.cycles = vec![0; m.steps.len()];
+    st.sent_values = vec![None; m.steps.len()];
+  }
+  if st.active && !was {
+    send_steps(&m.steps, Trigger::On, st, out);
+  }
+  if !st.active && was {
+    send_steps(&m.steps, Trigger::Off, st, out);
+  }
+  let v = normalize(st.level_db, m.min_db, m.max_db);
+  let mut follows = false;
+  for (i, s) in m.steps.iter().enumerate() {
+    if s.trigger != Trigger::Value {
+      continue;
+    }
+    follows = true;
+    let val = (s.lo + v * (s.hi - s.lo)).round().clamp(0.0, 127.0) as u8;
+    if st.sent_values[i] == Some(val) {
+      continue;
+    }
+    st.sent_values[i] = Some(val);
+    for msg in &s.msgs {
+      out.raw(&render(msg, val));
+    }
+  }
+  if follows {
+    v
+  } else if st.active {
+    1.0
+  } else {
+    0.0
+  }
+}
+
 fn process_band(m: &Mapping, st: &mut BandState, out: &mut Outputs) -> f32 {
   let level = st.level_db;
   let off_db = m.threshold_db - m.hysteresis_db.max(0.0);
@@ -168,6 +255,7 @@ fn process_band(m: &Mapping, st: &mut BandState, out: &mut Outputs) -> f32 {
   }
 
   match m.output {
+    OutputKind::Device => process_device(m, st, out, was),
     OutputKind::Note => {
       let vel_norm = normalize(level, m.threshold_db, m.max_db);
       // note/channel edited while held
@@ -359,5 +447,98 @@ fn run(app: AppHandle, shared: Arc<Shared>, rx: Receiver<AudioMsg>) {
     }
 
     std::thread::sleep(HOP);
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  // steps as produced by src/devices/v4ex.js compile() with the default profile
+  const STEPS: &str = r#"[{"trigger":"on","msgs":[[176,0,1],[176,32,0],[192,2]]},{"trigger":"on","msgs":[[176,5,127]]},{"trigger":"off","msgs":[[176,5,0]]},{"trigger":"cycle","seq":[[[176,9,127]],[[176,9,0]]]},{"trigger":"value","msgs":[[176,1,-1]],"lo":0,"hi":127},{"trigger":"off","msgs":[[176,0,80],[176,32,0],[192,1]]}]"#;
+
+  fn mapping() -> Mapping {
+    Mapping {
+      output: OutputKind::Device,
+      steps: serde_json::from_str(STEPS).unwrap(),
+      threshold_db: -30.0,
+      min_db: -40.0,
+      max_db: -6.0,
+      ..Default::default()
+    }
+  }
+
+  fn run(m: &Mapping, st: &mut BandState, out: &mut Outputs, level: f32) -> Vec<Vec<u8>> {
+    st.level_db = level;
+    process_band(m, st, out);
+    std::mem::take(&mut out.sent)
+  }
+
+  #[test]
+  fn device_steps() {
+    let m = mapping();
+    let mut st = BandState::new();
+    let mut out = Outputs::default();
+
+    let loud = run(&m, &mut st, &mut out, -6.0);
+    assert_eq!(
+      loud,
+      vec![
+        vec![0xb0, 0x00, 0x01],
+        vec![0xb0, 0x20, 0x00],
+        vec![0xc0, 0x02],
+        vec![0xb0, 0x05, 0x7f],
+        vec![0xb0, 0x09, 0x7f],
+        vec![0xb0, 0x01, 0x7f],
+      ]
+    );
+    // same level again: nothing new
+    assert!(run(&m, &mut st, &mut out, -6.0).is_empty());
+
+    let quiet = run(&m, &mut st, &mut out, -60.0);
+    assert_eq!(
+      quiet,
+      vec![
+        vec![0xb0, 0x05, 0x00],
+        vec![0xb0, 0x00, 0x50],
+        vec![0xb0, 0x20, 0x00],
+        vec![0xc0, 0x01],
+        vec![0xb0, 0x01, 0x00],
+      ]
+    );
+
+    // toggle flips on the second trigger
+    let again = run(&m, &mut st, &mut out, -6.0);
+    assert!(again.contains(&vec![0xb0, 0x09, 0x00]));
+  }
+
+  #[test]
+  fn cycle_inputs() {
+    // A bus inputs 1..3, one per trigger, wrapping around
+    let m = Mapping {
+      output: OutputKind::Device,
+      steps: serde_json::from_str(
+        r#"[{"trigger":"cycle","seq":[[[176,0,0],[176,32,0],[192,0]],[[176,0,0],[176,32,0],[192,1]],[[176,0,0],[176,32,0],[192,2]]]}]"#,
+      )
+      .unwrap(),
+      threshold_db: -30.0,
+      ..Default::default()
+    };
+    let mut st = BandState::new();
+    let mut out = Outputs::default();
+    let programs: Vec<u8> = (0..4)
+      .map(|_| {
+        let hit = run(&m, &mut st, &mut out, -6.0);
+        run(&m, &mut st, &mut out, -60.0);
+        hit[2][1]
+      })
+      .collect();
+    assert_eq!(programs, vec![0, 1, 2, 0]);
+  }
+
+  #[test]
+  fn pitch_bend_render() {
+    assert_eq!(render(&[0xe1, -2, -3], 127), vec![0xe1, 0x7f, 0x7f]);
+    assert_eq!(render(&[0xe1, -2, -3], 0), vec![0xe1, 0x00, 0x00]);
   }
 }

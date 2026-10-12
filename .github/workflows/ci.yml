@@ -51,6 +51,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev
       - run: npm ci
+      - name: test
+        if: runner.os == 'Linux'
+        run: cargo test --manifest-path src-tauri/Cargo.toml
       # with a tag this also creates a draft release; otherwise it only builds
       - uses: tauri-apps/tauri-action@v0
         env:
@@ -81,6 +84,7 @@ jobs:
           node-version: lts/*
           cache: npm
       - run: npm ci
+      - run: npm test
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:

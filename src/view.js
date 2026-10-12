@@ -1,5 +1,6 @@
 // spectrum + waterfall canvases, with draggable band overlays
 import { DISPLAY_POINTS, DISPLAY_MIN_HZ, DISPLAY_MAX_HZ } from './defaults.js'
+import { describeAction } from './devices/v4ex.js'
 
 const DB_MIN = -100
 const DB_MAX = 0
@@ -47,10 +48,13 @@ const withAlpha = (hex, a) => {
 export const outputSummary = (m) => {
   if (m.output === 'note') return `${noteName(m.note)} · ch${m.channel}`
   if (m.output === 'cc') return `CC${m.cc} · ch${m.channel}`
-  return `${m.oscAddress} (${m.oscMode})`
+  if (m.output === 'osc') return `${m.oscAddress} (${m.oscMode})`
+  return m.actions.length ? `V-4EX: ${m.actions.map(describeAction).join(' + ')}` : 'V-4EX: no actions'
 }
 
-const usesThreshold = (m) => m.output === 'note' || (m.output === 'osc' && m.oscMode === 'gate')
+// device outputs can mix triggered and level-following steps, so they may show both
+export const usesThreshold = (m) => m.output === 'note' || (m.output === 'osc' && m.oscMode === 'gate') || (m.output === 'device' && (!m.steps.length || m.steps.some((s) => s.trigger !== 'value')))
+export const usesRange = (m) => m.output === 'cc' || (m.output === 'osc' && m.oscMode === 'value') || (m.output === 'device' && m.steps.some((s) => s.trigger === 'value'))
 
 export class SpectrumView {
   constructor({ spectrumCanvas, waterfallCanvas, readout, app }) {
@@ -269,7 +273,8 @@ export class SpectrumView {
       if (usesThreshold(m)) {
         this.hline(x0, x1, this.yOf(m.thresholdDb), withAlpha(color, 0.95))
         if (m.hysteresisDb > 0) this.hline(x0, x1, this.yOf(m.thresholdDb - m.hysteresisDb), withAlpha(color, 0.45), [3, 3])
-      } else {
+      }
+      if (usesRange(m)) {
         const yMax = this.yOf(m.maxDb)
         const yMin = this.yOf(m.minDb)
         ctx.fillStyle = withAlpha(color, 0.08)
@@ -355,9 +360,8 @@ export class SpectrumView {
       if (Math.abs(x - x0) <= EDGE_PX) return { m, part: 'low' }
       if (Math.abs(x - x1) <= EDGE_PX) return { m, part: 'high' }
       if (x < x0 || x > x1) continue
-      if (usesThreshold(m)) {
-        if (Math.abs(y - this.yOf(m.thresholdDb)) <= LINE_PX) return { m, part: 'threshold' }
-      } else {
+      if (usesThreshold(m) && Math.abs(y - this.yOf(m.thresholdDb)) <= LINE_PX) return { m, part: 'threshold' }
+      if (usesRange(m)) {
         if (Math.abs(y - this.yOf(m.maxDb)) <= LINE_PX) return { m, part: 'max' }
         if (Math.abs(y - this.yOf(m.minDb)) <= LINE_PX) return { m, part: 'min' }
       }

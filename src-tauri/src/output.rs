@@ -13,6 +13,8 @@ pub struct Outputs {
   socket: Option<UdpSocket>,
   osc_target: Option<SocketAddr>,
   osc_key: String,
+  #[cfg(test)]
+  pub sent: Vec<Vec<u8>>,
 }
 
 pub fn list_midi_ports() -> Result<Vec<String>, String> {
@@ -99,8 +101,16 @@ impl Outputs {
   }
 
   fn midi_send(&mut self, msg: &[u8]) {
+    #[cfg(test)]
+    self.sent.push(msg.to_vec());
     if let Some(conn) = self.midi.as_mut() {
       let _ = conn.send(msg);
+    }
+  }
+
+  pub fn raw(&mut self, msg: &[u8]) {
+    if !msg.is_empty() {
+      self.midi_send(msg);
     }
   }
 
