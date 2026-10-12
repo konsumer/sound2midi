@@ -21,6 +21,7 @@ const store = (config) => {
 export const createBackend = async () => {
   let config = load()
   let midiAccess = null
+  let midiError = null
   let midiOut = null
   const frameListeners = new Set()
 
@@ -29,12 +30,18 @@ export const createBackend = async () => {
   }
 
   const ensureMidi = async () => {
-    if (midiAccess || !navigator.requestMIDIAccess) return
+    if (midiAccess) return
+    if (!navigator.requestMIDIAccess) {
+      midiError = 'Web MIDI not supported in this browser (use Chrome, Edge or Firefox)'
+      return
+    }
     try {
       midiAccess = await navigator.requestMIDIAccess()
+      midiError = null
       midiAccess.onstatechange = connectMidi
       connectMidi()
     } catch (e) {
+      midiError = e?.name === 'NotAllowedError' ? 'Web MIDI blocked: allow MIDI for this site, then ⟳' : 'Web MIDI unavailable'
       console.warn('Web MIDI unavailable', e)
     }
   }
@@ -65,12 +72,14 @@ export const createBackend = async () => {
   return {
     kind: 'web',
     capabilities: { osc: false },
-    getConfig: async () => config,
+    // hand out a copy: the UI edits its config in place, and sharing the object
+    // would hide changes from setConfig (e.g. a newly picked MIDI port)
+    getConfig: async () => structuredClone(config),
     setConfig: async (next) => {
-      const midiChanged = next.midiOutput !== config.midiOutput
       config = normalizeConfig(next)
       store(config)
-      if (midiChanged) {
+      if ((midiOut?.id ?? null) !== (config.midiOutput || null)) {
+        // release anything held on the old port before switching
         for (let ch = 1; ch <= 16; ch++) out.cc(ch, 123, 0)
         connectMidi()
       }
@@ -84,7 +93,7 @@ export const createBackend = async () => {
     listMidiOutputs: async () => {
       await ensureMidi()
       const ports = midiAccess ? [...midiAccess.outputs.values()].map((o) => ({ id: o.id, name: o.name })) : []
-      return { ports, virtualSupported: false, unavailable: !midiAccess }
+      return { ports, virtualSupported: false, unavailable: midiAccess ? null : midiError || 'Web MIDI unavailable' }
     },
     start,
     stop: async () => {

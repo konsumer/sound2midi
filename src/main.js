@@ -119,7 +119,7 @@ const refreshDevices = async () => {
   }
   try {
     const { ports, virtualSupported, unavailable } = await backend.listMidiOutputs()
-    const extra = [{ id: '', name: unavailable ? 'Web MIDI unavailable' : 'None' }]
+    const extra = [{ id: '', name: unavailable || 'None' }]
     if (virtualSupported) extra.push({ id: '__virtual__', name: 'Virtual port (sound2midi)' })
     fillSelect($('midi'), ports, app.config.midiOutput, extra)
   } catch (e) {
